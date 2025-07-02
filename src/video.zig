@@ -285,15 +285,15 @@ pub const Tracker = struct {
         const T = @TypeOf(object);
         const T_info = @typeInfo(T);
 
-        if (T_info != .Pointer) @compileError("ptr must be a pointer");
-        if (T_info.Pointer.size != .One) @compileError("ptr must be a single item pointer");
-        if (!@hasDecl(T_info.Pointer.child, "init")) @compileError("object must have an init function");
-        if (!@hasDecl(T_info.Pointer.child, "deinit")) @compileError("object must have a deinit function");
+        if (T_info != .pointer) @compileError("ptr must be a pointer");
+        if (T_info.pointer.size != .one) @compileError("ptr must be a single item pointer");
+        if (!@hasDecl(T_info.pointer.child, "init")) @compileError("object must have an init function");
+        if (!@hasDecl(T_info.pointer.child, "deinit")) @compileError("object must have a deinit function");
 
         const gen = struct {
             pub fn deinit(self: *Self) void {
                 assert(self.ptr != null);
-                T_info.Pointer.child.deinit(self.ptr);
+                T_info.pointer.child.deinit(self.ptr);
                 self.ptr = null;
             }
 
@@ -304,7 +304,7 @@ pub const Tracker = struct {
             pub fn update(self: *Self, image: Mat) UpdateReturn {
                 var c_box: c.Rect = undefined;
                 const success = c.Tracker_Update(self.ptr, image.toC(), @ptrCast(&c_box));
-                var rect = Rect.initFromC(c_box);
+                const rect = Rect.initFromC(c_box);
                 return UpdateReturn{
                     .box = rect,
                     .success = success,
@@ -312,7 +312,7 @@ pub const Tracker = struct {
             }
         };
 
-        const t_ptr = try T_info.Pointer.child.init();
+        const t_ptr = try T_info.pointer.child.init();
 
         return .{
             .ptr = t_ptr,
@@ -602,7 +602,7 @@ test "video findTransformECC" {
     defer map_translation.deinit();
     const eec_iteration = 50;
     const eec_epsilon = -1;
-    var ct = try core.TermCriteria.init(.{ .count = true, .eps = true }, eec_iteration, eec_epsilon);
+    const ct = try core.TermCriteria.init(.{ .count = true, .eps = true }, eec_iteration, eec_epsilon);
 
     var input_mask = try Mat.init();
     defer input_mask.deinit();

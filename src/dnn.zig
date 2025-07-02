@@ -167,7 +167,7 @@ pub const Net = struct {
 
     pub fn forwardLayers(self: Self, output_blob_names: [][]const u8, allocator: std.mem.Allocator) !Mats {
         var c_mats: c.Mats = undefined;
-        var c_string_array = try allocator.alloc([*]const u8, output_blob_names.len);
+        const c_string_array = try allocator.alloc([*]const u8, output_blob_names.len);
         defer allocator.free(c_string_array);
         for (output_blob_names, 0..) |name, i| c_string_array[i] = @as([*]const u8, @ptrCast(name));
 
@@ -234,13 +234,13 @@ pub const Net = struct {
         }
     } {
         var arena = std.heap.ArenaAllocator.init(allocator);
-        var arena_allocator = arena.allocator();
+        const arena_allocator = arena.allocator();
 
         var c_strs: c.CStrings = undefined;
         defer c.CStrings_Close(c_strs);
         c.Net_GetLayerNames(self.ptr, &c_strs);
         const len = @as(usize, @intCast(c_strs.length));
-        var return_array = try arena_allocator.alloc([]const u8, len);
+        const return_array = try arena_allocator.alloc([]const u8, len);
         for (return_array, 0..) |*item, i| {
             item.* = try arena_allocator.dupe(u8, std.mem.span(c_strs.strs[i]));
         }
@@ -283,7 +283,7 @@ pub const Blob = struct {
             swap_rb,
             crop,
         );
-        var new_blob_mat = try Mat.initFromC(new_c_blob);
+        const new_blob_mat = try Mat.initFromC(new_c_blob);
         return try initFromMat(new_blob_mat);
     }
 
@@ -304,7 +304,7 @@ pub const Blob = struct {
         ddepth: Mat.MatType,
     ) !Self {
         var new_blob_mat = try Mat.init();
-        var c_mats = try Mat.toCStructs(images);
+        const c_mats = try Mat.toCStructs(images);
         c.Net_BlobFromImages(
             c_mats,
             new_blob_mat.toC(),
@@ -397,7 +397,7 @@ pub fn nmsBoxes(
     max_index: usize,
     allocator: std.mem.Allocator,
 ) !std.ArrayList(i32) {
-    var c_bboxes_array = try allocator.alloc(c.Rect, bboxes.len);
+    const c_bboxes_array = try allocator.alloc(c.Rect, bboxes.len);
     defer allocator.free(c_bboxes_array);
     for (bboxes, 0..) |bbox, i| c_bboxes_array[i] = bbox.toC();
     const c_bboxes_struct = c.Rects{
@@ -405,7 +405,7 @@ pub fn nmsBoxes(
         .length = @as(i32, @intCast(bboxes.len)),
     };
 
-    var c_scores_struct = c.FloatVector{
+    const c_scores_struct = c.FloatVector{
         .val = @as([*]f32, @ptrCast(scores.ptr)),
         .length = @as(i32, @intCast(scores.len)),
     };
@@ -447,7 +447,7 @@ pub fn nmsBoxesWithParams(
     max_index: usize,
     allocator: std.mem.Allocator,
 ) !std.ArrayList(i32) {
-    var c_bboxes_array = try allocator.alloc(c.Rect, bboxes.len);
+    const c_bboxes_array = try allocator.alloc(c.Rect, bboxes.len);
     defer allocator.free(c_bboxes_array);
     for (bboxes, 0..) |bbox, i| c_bboxes_array[i] = bbox.toC();
     const c_bboxes_struct = c.Rects{

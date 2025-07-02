@@ -757,7 +757,7 @@ pub fn drawMatches(
     flags: DrawMatchesFlag,
     allocator: std.mem.Allocator,
 ) !void {
-    var c_keypoints_array1 = try allocator.alloc(c.KeyPoint, kp1.len);
+    const c_keypoints_array1 = try allocator.alloc(c.KeyPoint, kp1.len);
     defer allocator.free(c_keypoints_array1);
     for (kp1, 0..) |keypoint, i| c_keypoints_array1[i] = keypoint.toC();
     const c_keypoints1 = c.KeyPoints{
@@ -765,7 +765,7 @@ pub fn drawMatches(
         .keypoints = @as([*]c.KeyPoint, @ptrCast(c_keypoints_array1.ptr)),
     };
 
-    var c_keypoints_array2 = try allocator.alloc(c.KeyPoint, kp2.len);
+    const c_keypoints_array2 = try allocator.alloc(c.KeyPoint, kp2.len);
     defer allocator.free(c_keypoints_array2);
     for (kp2, 0..) |keypoint, i| c_keypoints_array2[i] = keypoint.toC();
     const c_keypoints2 = c.KeyPoints{
@@ -773,7 +773,7 @@ pub fn drawMatches(
         .keypoints = @as([*]c.KeyPoint, @ptrCast(c_keypoints_array2.ptr)),
     };
 
-    var c_matches1to2_array = try allocator.alloc(c.DMatch, matches1to2.len);
+    const c_matches1to2_array = try allocator.alloc(c.DMatch, matches1to2.len);
     defer allocator.free(c_matches1to2_array);
     for (matches1to2, 0..) |match, i| c_matches1to2_array[i] = match.toC();
     const c_matches1to2 = c.DMatches{
@@ -781,7 +781,7 @@ pub fn drawMatches(
         .dmatches = @as([*]c.DMatch, @ptrCast(c_matches1to2_array.ptr)),
     };
 
-    var c_matches_mask = core.toByteArray(matches_mask);
+    const c_matches_mask = core.toByteArray(matches_mask);
     c.DrawMatches(
         img1.toC(),
         c_keypoints1,

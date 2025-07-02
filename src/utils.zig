@@ -10,7 +10,7 @@ pub fn fromCStructsToArrayList(from_array: anytype, from_array_length: i32, comp
             const elem = blk: {
                 const elem = ToType.initFromC(from_array[i]);
                 break :blk switch (comptime @typeInfo(@TypeOf(elem))) {
-                    .ErrorUnion => try elem,
+                    .error_union => try elem,
                     else => elem,
                 };
             };
@@ -57,7 +57,7 @@ pub fn downloadFile(url: []const u8, dir: []const u8, allocator: std.mem.Allocat
         "{s}{s}",
         .{ dir, filename },
     );
-    var child = std.ChildProcess.init(
+    var child = std.process.Child.init(
         &.{
             "curl",
             url,
@@ -80,6 +80,6 @@ pub fn downloadFile(url: []const u8, dir: []const u8, allocator: std.mem.Allocat
 }
 
 test "ensureNotNull" {
-    var ptr: ?*u8 = null;
+    const ptr: ?*u8 = null;
     try std.testing.expectError(error.AllocationError, ensurePtrNotNull(ptr));
 }

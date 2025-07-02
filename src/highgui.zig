@@ -47,8 +47,8 @@ pub const Window = struct {
 
         fn toEnum(wp: PropertyFlag, wf: anytype) Flag {
             const f: u32 = switch (@typeInfo(@TypeOf(wf))) {
-                .Int, .ComptimeInt => @intCast(wf),
-                .Float, .ComptimeFloat => @intFromFloat(wf),
+                .int, .comptime_int => @intCast(wf),
+                .float, .comptime_float => @intFromFloat(wf),
                 else => unreachable,
             };
             return switch (f) {
@@ -315,14 +315,14 @@ test "highgui window" {
     var window = try Window.init("test");
     try testing.expectEqualStrings("test", window.name);
 
-    var val = window.waitKey(1);
+    const val = window.waitKey(1);
     try testing.expectEqual(@as(i32, -1), val);
 
     try testing.expectEqual(true, window.isOpened());
 
     window.setProperty(.fullscreen, .fullscreen);
 
-    var window_flag = window.getProperty(.fullscreen);
+    const window_flag = window.getProperty(.fullscreen);
     try testing.expectEqual(Window.Flag.fullscreen, window_flag);
 
     window.setTitle("test2");
