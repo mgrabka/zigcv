@@ -1,7 +1,7 @@
 const std = @import("std");
 const LazyPath = std.build.LazyPath;
 const zigcv = @import("libs.zig");
-pub fn build(b: *std.build.Builder) void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
 
@@ -53,7 +53,7 @@ pub fn build(b: *std.build.Builder) void {
     for (examples) |ex| {
         const exe = b.addExecutable(.{
             .name = ex.name,
-            .root_source_file = .{ .path = ex.path },
+            .root_source_file = b.path(ex.path),
             .target = target,
             .optimize = mode,
         });
@@ -81,7 +81,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter") orelse null;
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = mode,
         .filter = test_filter,

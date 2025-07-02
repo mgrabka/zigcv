@@ -1,0 +1,20 @@
+.{
+    .name = .zigcv,
+    .version = "0.3.0",
+
+    .fingerprint = 0x89408632542be1e3,
+    .minimum_zig_version = "0.14.0",
+
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "libs.zig",
+        "src",
+        "libs/gocv",
+        "examples",
+        "README.md",
+        "LICENSE",
+    },
+}
