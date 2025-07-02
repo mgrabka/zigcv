@@ -1,9 +1,46 @@
 const std = @import("std");
 const LazyPath = std.build.LazyPath;
-const zigcv = @import("libs.zig");
+
+const go_src_dir = "libs/gocv/";
+const zig_src_dir = "src/";
+const c_build_options: []const []const u8 = &.{
+    "-Wall",
+    "-Wextra",
+    "--std=c++11",
+};
+
+var ensure_submodule: bool = false;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
+
+    ensureSubmodulesExist(b);
+
+    const zigcv_lib = b.addStaticLibrary(.{
+        .name = "zigcv",
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = mode,
+    });
+
+    const opencv_lib = buildOpenCVLib(b, target, mode);
+    zigcv_lib.linkLibrary(opencv_lib);
+    linkToOpenCV(zigcv_lib);
+
+    b.installArtifact(zigcv_lib);
+
+    const zigcv_module = b.addModule("zigcv", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = mode,
+    });
+
+    zigcv_module.addIncludePath(b.path(go_src_dir));
+    zigcv_module.addIncludePath(b.path(zig_src_dir));
+
+    zigcv_module.linkLibrary(opencv_lib);
+    linkSystemLibrariesToModule(zigcv_module);
 
     const examples = [_]Program{
         .{
@@ -61,8 +98,8 @@ pub fn build(b: *std.Build) void {
 
         b.installArtifact(exe);
 
-        zigcv.link(b, exe);
-        zigcv.addAsPackage(exe);
+        linkZigCV(b, exe);
+        addZigCVAsPackage(exe, "zigcv");
 
         const run_cmd = b.addRunArtifact(exe);
         const run_step = b.step(ex.name, ex.desc);
@@ -81,23 +118,18 @@ pub fn build(b: *std.Build) void {
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter") orelse null;
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = mode,
         .filter = test_filter,
     });
-    zigcv.link(b, unit_tests);
-    zigcv.addAsPackage(unit_tests);
+    linkZigCV(b, unit_tests);
+    addZigCVAsPackage(unit_tests, "zigcv");
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
-
-    // const emit_docs = b.option(bool, "docs", "Generate Docs");
-    // if (emit_docs) |d| {
-    //     if (d) exe_tests.emit_docs = .emit;
-    // }
 }
 
 inline fn thisDir() []const u8 {
@@ -109,4 +141,271 @@ const Program = struct {
     path: []const u8,
     desc: []const u8,
     fstage1: bool = false,
+};
+
+fn addZigCVAsPackage(exe: *std.Build.Step.Compile, name: []const u8) void {
+    const owner = exe.step.owner;
+    const module = owner.createModule(.{
+        .root_source_file = owner.path("src/root.zig"),
+        .imports = &.{},
+    });
+
+    module.addIncludePath(owner.path(go_src_dir));
+    module.addIncludePath(owner.path(zig_src_dir));
+
+    exe.root_module.addImport(name, module);
+}
+
+fn linkZigCV(b: *std.Build, exe: *std.Build.Step.Compile) void {
+    ensureSubmodules(exe);
+
+    const target = exe.root_module.resolved_target.?;
+    const mode = exe.root_module.optimize.?;
+
+    const opencv_lib = buildOpenCVLib(b, target, mode);
+    exe.linkLibrary(opencv_lib);
+    linkToOpenCV(exe);
+}
+
+fn buildOpenCVLib(b: *std.Build, target: std.Build.ResolvedTarget, mode: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const go_src_files = .{
+        "asyncarray.cpp",
+        "calib3d.cpp",
+        "core.cpp",
+        "dnn.cpp",
+        "features2d.cpp",
+        "highgui.cpp",
+        "imgcodecs.cpp",
+        "imgproc.cpp",
+        "objdetect.cpp",
+        "photo.cpp",
+        "svd.cpp",
+        "version.cpp",
+        "video.cpp",
+        "videoio.cpp",
+    };
+
+    const cv = b.addStaticLibrary(.{
+        .name = "opencv",
+        .target = target,
+        .optimize = mode,
+    });
+
+    const target_os = target.result.os.tag;
+    var build_flags = std.ArrayList([]const u8).init(b.allocator);
+    defer build_flags.deinit();
+
+    for (c_build_options) |flag| {
+        build_flags.append(flag) catch unreachable;
+    }
+
+    if (target_os == .linux) {
+        build_flags.append("-stdlib=libstdc++") catch unreachable;
+    }
+
+    inline for (go_src_files) |file| {
+        const c_file_path = b.pathJoin(&.{ go_src_dir, file });
+        cv.addCSourceFile(.{
+            .file = b.path(c_file_path),
+            .flags = build_flags.items,
+        });
+    }
+
+    linkToOpenCV(cv);
+    return cv;
+}
+
+fn linkToOpenCV(exe: *std.Build.Step.Compile) void {
+    const target_os = exe.root_module.resolved_target.?.result.os.tag;
+
+    exe.addIncludePath(exe.step.owner.path(go_src_dir));
+    exe.addIncludePath(exe.step.owner.path(zig_src_dir));
+    switch (target_os) {
+        .windows => {
+            exe.addIncludePath(exe.step.owner.path("c:/msys64/mingw64/include"));
+            exe.addIncludePath(exe.step.owner.path("c:/msys64/mingw64/include/c++/12.2.0"));
+            exe.addIncludePath(exe.step.owner.path("c:/msys64/mingw64/include/c++/12.2.0/x86_64-w64-mingw32"));
+            exe.addLibraryPath(exe.step.owner.path("c:/msys64/mingw64/lib"));
+            exe.addIncludePath(exe.step.owner.path("c:/opencv/build/install/include"));
+            exe.addLibraryPath(exe.step.owner.path("c:/opencv/build/install/x64/mingw/staticlib"));
+
+            exe.linkSystemLibrary("opencv4");
+            exe.linkSystemLibrary("stdc++.dll");
+            exe.linkSystemLibrary("unwind");
+            exe.linkSystemLibrary("m");
+            exe.linkSystemLibrary("c");
+        },
+        else => {
+            exe.linkSystemLibrary("stdc++");
+            exe.linkSystemLibrary("opencv4");
+            exe.linkSystemLibrary("unwind");
+            exe.linkSystemLibrary("m");
+            exe.linkSystemLibrary("c");
+        },
+    }
+}
+
+fn linkSystemLibrariesToModule(module: *std.Build.Module) void {
+    const target_os = module.resolved_target.?.result.os.tag;
+
+    switch (target_os) {
+        .windows => {
+            module.linkSystemLibrary("opencv4", .{});
+            module.linkSystemLibrary("stdc++.dll", .{});
+            module.linkSystemLibrary("unwind", .{});
+            module.linkSystemLibrary("m", .{});
+            module.linkSystemLibrary("c", .{});
+        },
+        else => {
+            module.linkSystemLibrary("stdc++", .{});
+            module.linkSystemLibrary("opencv4", .{});
+            module.linkSystemLibrary("unwind", .{});
+            module.linkSystemLibrary("m", .{});
+            module.linkSystemLibrary("c", .{});
+        },
+    }
+}
+
+fn ensureSubmodulesExist(b: *std.Build) void {
+    const submodule_check_file = "libs/gocv/version.cpp";
+
+    if (std.fs.cwd().access(submodule_check_file, .{})) |_| {
+        return;
+    } else |_| {
+        std.log.info("Initializing git submodules...", .{});
+
+        const result = std.process.Child.run(.{
+            .allocator = b.allocator,
+            .argv = &.{ "git", "submodule", "update", "--init", "--recursive" },
+        }) catch |err| {
+            std.log.err("Failed to run git submodule command: {}", .{err});
+            std.process.exit(1);
+        };
+
+        if (result.term.Exited != 0) {
+            std.log.err("Git submodule command failed with exit code: {}", .{result.term.Exited});
+            std.log.err("stdout: {s}", .{result.stdout});
+            std.log.err("stderr: {s}", .{result.stderr});
+            std.process.exit(1);
+        }
+
+        std.log.info("Git submodules initialized successfully", .{});
+    }
+}
+
+fn ensureSubmodules(exe: *std.Build.Step.Compile) void {
+    const b = exe.step.owner;
+    if (!ensure_submodule) {
+        const git_submodule_cmd = b.addSystemCommand(&.{ "git", "submodule", "update", "--init", "--recursive" });
+        exe.step.dependOn(&git_submodule_cmd.step);
+        ensure_submodule = true;
+    }
+}
+
+pub const contrib = struct {
+    pub fn addAsPackage(exe: *std.Build.Step.Compile) void {
+        addAsPackageWithCustomName(exe, "zigcv_contrib");
+    }
+
+    pub fn addAsPackageWithCustomName(exe: *std.Build.Step.Compile, name: []const u8) void {
+        const owner = exe.step.owner;
+        const module = owner.createModule(.{
+            .root_source_file = owner.path("src/contrib/main.zig"),
+            .imports = &.{},
+        });
+        exe.root_module.addImport(name, module);
+    }
+
+    pub fn link(b: *std.Build, exe: *std.Build.Step.Compile) void {
+        ensureSubmodules(exe);
+
+        const target = exe.root_module.resolved_target.?;
+        const optimize = exe.root_module.optimize.?;
+
+        const contrib_dir = b.pathJoin(&.{ go_src_dir, "contrib/" });
+        const contrib_files = .{
+            "aruco.cpp",
+            "bgsegm.cpp",
+            "face.cpp",
+            "img_hash.cpp",
+            "tracking.cpp",
+            "wechat_qrcode.cpp",
+            "xfeatures2d.cpp",
+            "ximgproc.cpp",
+            "xphoto.cpp",
+        };
+
+        const cv_contrib = b.addStaticLibrary(.{
+            .name = "opencv_contrib",
+            .target = target,
+            .optimize = optimize,
+        });
+        cv_contrib.force_pic = true;
+        for (contrib_files) |file| {
+            const c_path = b.pathJoin(&.{ contrib_dir, file });
+            cv_contrib.addCSourceFile(.{
+                .file = b.path(c_path),
+                .flags = c_build_options,
+            });
+        }
+        cv_contrib.addIncludePath(b.path(contrib_dir));
+        linkToOpenCV(cv_contrib);
+
+        exe.linkLibrary(cv_contrib);
+        linkToOpenCV(exe);
+    }
+};
+
+pub const cuda = struct {
+    pub fn addAsPackage(exe: *std.Build.Step.Compile) void {
+        addAsPackageWithCustomName(exe, "zigcv_cuda");
+    }
+
+    pub fn addAsPackageWithCustomName(exe: *std.Build.Step.Compile, name: []const u8) void {
+        const owner = exe.step.owner;
+        const module = owner.createModule(.{
+            .root_source_file = owner.path("src/cuda/main.zig"),
+            .imports = &.{},
+        });
+        exe.root_module.addImport(name, module);
+    }
+
+    pub fn link(b: *std.Build, exe: *std.Build.Step.Compile) void {
+        ensureSubmodules(exe);
+
+        const target = exe.root_module.resolved_target.?;
+        const optimize = exe.root_module.optimize.?;
+
+        const cuda_dir = b.pathJoin(&.{ go_src_dir, "cuda/" });
+        const cuda_files = .{
+            "arithm.cpp",
+            "bgsegm.cpp",
+            "core.cpp",
+            "cuda.cpp",
+            "filters.cpp",
+            "imgproc.cpp",
+            "objdetect.cpp",
+            "optflow.cpp",
+            "warping.cpp",
+        };
+
+        const cv_cuda = b.addStaticLibrary(.{
+            .name = "opencv_cuda",
+            .target = target,
+            .optimize = optimize,
+        });
+        cv_cuda.force_pic = true;
+        for (cuda_files) |file| {
+            const c_path = b.pathJoin(&.{ cuda_dir, file });
+            cv_cuda.addCSourceFile(.{
+                .file = b.path(c_path),
+                .flags = c_build_options,
+            });
+        }
+        cv_cuda.addIncludePath(b.path(go_src_dir));
+        linkToOpenCV(cv_cuda);
+
+        exe.linkLibrary(cv_cuda);
+        linkToOpenCV(exe);
+    }
 };

@@ -1291,9 +1291,9 @@ pub fn reshape(self: Self, cn: i32, rows_: usize) !Self {
 // Region returns a new Mat that points to a region of this Mat. Changes made to the
 // region Mat will affect the original Mat, since they are pointers to the underlying
 // OpenCV Mat object.
-pub fn region(self: Self, r: Rect) Self {
+pub fn region(self: Self, r: Rect) !Self {
     const ptr = c.Mat_Region(self.ptr, r.toC());
-    return initFromC(ptr);
+    return try initFromC(ptr);
 }
 
 // T  transpose matrix
