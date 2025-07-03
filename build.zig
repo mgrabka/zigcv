@@ -6,7 +6,7 @@ const zig_src_dir = "src/";
 const c_build_options: []const []const u8 = &.{
     "-Wall",
     "-Wextra",
-    "--std=c++11",
+    "-std=c++11",
 };
 
 var ensure_submodule: bool = false;
@@ -168,6 +168,12 @@ fn linkZigCV(b: *std.Build, exe: *std.Build.Step.Compile) void {
 }
 
 fn buildOpenCVLib(b: *std.Build, target: std.Build.ResolvedTarget, mode: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const target_os = target.result.os.tag;
+
+    if (target_os == .linux) {
+        return buildOpenCVLibLinux(b, target, mode);
+    }
+
     const go_src_files = .{
         "asyncarray.cpp",
         "calib3d.cpp",
@@ -191,16 +197,11 @@ fn buildOpenCVLib(b: *std.Build, target: std.Build.ResolvedTarget, mode: std.bui
         .optimize = mode,
     });
 
-    const target_os = target.result.os.tag;
     var build_flags = std.ArrayList([]const u8).init(b.allocator);
     defer build_flags.deinit();
 
     for (c_build_options) |flag| {
         build_flags.append(flag) catch unreachable;
-    }
-
-    if (target_os == .linux) {
-        build_flags.append("-stdlib=libstdc++") catch unreachable;
     }
 
     inline for (go_src_files) |file| {
@@ -209,6 +210,70 @@ fn buildOpenCVLib(b: *std.Build, target: std.Build.ResolvedTarget, mode: std.bui
             .file = b.path(c_file_path),
             .flags = build_flags.items,
         });
+    }
+
+    linkToOpenCV(cv);
+    return cv;
+}
+
+fn buildOpenCVLibLinux(b: *std.Build, target: std.Build.ResolvedTarget, mode: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const cv = b.addStaticLibrary(.{
+        .name = "opencv",
+        .target = target,
+        .optimize = mode,
+    });
+
+    const pkg_result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &.{ "pkg-config", "--cflags", "--libs", "opencv4" },
+    }) catch |err| {
+        std.log.err("pkg-config failed: {}. Please install opencv4 development packages.", .{err});
+        std.process.exit(1);
+    };
+
+    if (pkg_result.term.Exited != 0) {
+        std.log.err("pkg-config opencv4 failed. Please install opencv4 development packages.", .{});
+        std.process.exit(1);
+    }
+
+    const go_src_files = [_][]const u8{
+        "asyncarray.cpp",
+        "calib3d.cpp",
+        "core.cpp",
+        "dnn.cpp",
+        "features2d.cpp",
+        "highgui.cpp",
+        "imgcodecs.cpp",
+        "imgproc.cpp",
+        "objdetect.cpp",
+        "photo.cpp",
+        "svd.cpp",
+        "version.cpp",
+        "video.cpp",
+        "videoio.cpp",
+    };
+
+    // Create build directory
+    const build_dir = b.pathJoin(&.{ b.cache_root.path.?, "opencv_objs" });
+    const mkdir_cmd = b.addSystemCommand(&.{ "mkdir", "-p", build_dir });
+
+    for (go_src_files) |src_file| {
+        const obj_name = b.fmt("{s}.o", .{src_file[0 .. src_file.len - 4]});
+        const obj_path = b.pathJoin(&.{ build_dir, obj_name });
+        const src_path = b.pathJoin(&.{ go_src_dir, src_file });
+
+        const compile_cmd = b.addSystemCommand(&.{
+            "g++", "-c", "-fPIC", "-O2", "-std=c++17", "-I/usr/include/opencv4",
+        });
+
+        compile_cmd.addArg(b.fmt("-I{s}", .{go_src_dir}));
+        compile_cmd.addFileArg(b.path(src_path));
+        compile_cmd.addArg("-o");
+        compile_cmd.addArg(obj_path);
+        compile_cmd.step.dependOn(&mkdir_cmd.step);
+
+        cv.addObjectFile(.{ .cwd_relative = obj_path });
+        cv.step.dependOn(&compile_cmd.step);
     }
 
     linkToOpenCV(cv);
@@ -235,9 +300,32 @@ fn linkToOpenCV(exe: *std.Build.Step.Compile) void {
             exe.linkSystemLibrary("m");
             exe.linkSystemLibrary("c");
         },
+        .linux => {
+            exe.addIncludePath(.{ .cwd_relative = "/usr/include/opencv4" });
+            exe.addLibraryPath(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu" });
+
+            exe.linkSystemLibrary("opencv_core");
+            exe.linkSystemLibrary("opencv_imgproc");
+            exe.linkSystemLibrary("opencv_imgcodecs");
+            exe.linkSystemLibrary("opencv_highgui");
+            exe.linkSystemLibrary("opencv_features2d");
+            exe.linkSystemLibrary("opencv_calib3d");
+            exe.linkSystemLibrary("opencv_objdetect");
+            exe.linkSystemLibrary("opencv_dnn");
+            exe.linkSystemLibrary("opencv_ml");
+            exe.linkSystemLibrary("opencv_flann");
+            exe.linkSystemLibrary("opencv_photo");
+            exe.linkSystemLibrary("opencv_video");
+            exe.linkSystemLibrary("opencv_videoio");
+
+            exe.addObjectFile(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6" });
+            exe.linkSystemLibrary("unwind");
+            exe.linkSystemLibrary("m");
+            exe.linkSystemLibrary("c");
+        },
         else => {
-            exe.linkSystemLibrary("stdc++");
             exe.linkSystemLibrary("opencv4");
+            exe.linkSystemLibrary("stdc++");
             exe.linkSystemLibrary("unwind");
             exe.linkSystemLibrary("m");
             exe.linkSystemLibrary("c");
@@ -256,9 +344,21 @@ fn linkSystemLibrariesToModule(module: *std.Build.Module) void {
             module.linkSystemLibrary("m", .{});
             module.linkSystemLibrary("c", .{});
         },
-        else => {
+        .linux => {
+            const opencv_libs = [_][]const u8{ "opencv_core", "opencv_imgproc", "opencv_imgcodecs", "opencv_highgui", "opencv_features2d", "opencv_calib3d", "opencv_objdetect", "opencv_dnn", "opencv_ml", "opencv_flann", "opencv_photo", "opencv_video", "opencv_videoio" };
+
+            for (opencv_libs) |lib| {
+                module.linkSystemLibrary(lib, .{});
+            }
+
             module.linkSystemLibrary("stdc++", .{});
+            module.linkSystemLibrary("unwind", .{});
+            module.linkSystemLibrary("m", .{});
+            module.linkSystemLibrary("c", .{});
+        },
+        else => {
             module.linkSystemLibrary("opencv4", .{});
+            module.linkSystemLibrary("stdc++", .{});
             module.linkSystemLibrary("unwind", .{});
             module.linkSystemLibrary("m", .{});
             module.linkSystemLibrary("c", .{});
